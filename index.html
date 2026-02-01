@@ -387,6 +387,21 @@
       color: #888;
       min-height: 1.2em;
     }
+
+    .char-counter {
+      font-size: 0.75rem;
+      color: #555;
+      text-align: right;
+      margin-top: 4px;
+    }
+
+    .char-counter.warn {
+      color: #f59e0b;
+    }
+
+    .char-counter.limit {
+      color: #ef4444;
+    }
   </style>
 </head>
 <body>
@@ -425,7 +440,8 @@
     <div class="modal">
       <h2 id="modalTitle">New Note</h2>
       <input type="text" id="noteTitleInput" placeholder="Title (optional)">
-      <textarea id="noteTextInput" placeholder="Write your vision here..."></textarea>
+      <textarea id="noteTextInput" placeholder="Write your vision here..." maxlength="5000"></textarea>
+      <div class="char-counter" id="charCounter">0 / 5,000</div>
       <div class="modal-actions">
         <button class="btn-cancel" id="cancelBtn">Cancel</button>
         <button class="btn-save" id="saveBtn">Save</button>
@@ -458,7 +474,8 @@
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.3.0/firebase-app.js';
     import { getAuth, signInWithPopup, signOut, onAuthStateChanged, GoogleAuthProvider } from 'https://www.gstatic.com/firebasejs/11.3.0/firebase-auth.js';
-    import { getFirestore, collection, doc, setDoc, getDocs, deleteDoc, onSnapshot, orderBy, query } from 'https://www.gstatic.com/firebasejs/11.3.0/firebase-firestore.js';
+    import { getFirestore, collection, doc, setDoc, getDoc, getDocs, deleteDoc, onSnapshot, orderBy, query } from 'https://www.gstatic.com/firebasejs/11.3.0/firebase-firestore.js';
+    import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from 'https://www.gstatic.com/firebasejs/11.3.0/firebase-storage.js';
 
     // Firebase config - replace with your own from Firebase console
     const firebaseConfig = {
@@ -474,7 +491,10 @@
     const firebaseApp = initializeApp(firebaseConfig);
     const auth = getAuth(firebaseApp);
     const db = getFirestore(firebaseApp);
+    const storage = getStorage(firebaseApp);
     const googleProvider = new GoogleAuthProvider();
+
+    const MAX_NOTE_LENGTH = 5000;
 
     // DOM refs
     const notesList = document.getElementById('notesList');
@@ -542,13 +562,57 @@
       });
     }
 
+    async function hashText(text) {
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+      return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
     async function saveNote(id, title, text) {
-      const ref = doc(db, 'users', currentUser.uid, 'notes', id);
-      await setDoc(ref, { title, text, createdAt: Date.now() }, { merge: true });
+      const noteRef = doc(db, 'users', currentUser.uid, 'notes', id);
+      const existing = notes.find(n => n.id === id);
+      const textHash = await hashText(text);
+      const data = { title, text, textHash };
+      if (!existing) data.createdAt = Date.now();
+
+      // If text changed, invalidate cached audio
+      const textChanged = existing && (existing.textHash ? existing.textHash !== textHash : existing.text !== text);
+      if (textChanged && existing.audioUrl) {
+        data.audioUrl = null;
+        try {
+          await deleteObject(ref(storage, `users/${currentUser.uid}/audio/${id}.mp3`));
+        } catch {}
+      }
+
+      await setDoc(noteRef, data, { merge: true });
     }
 
     async function deleteNote(id) {
       await deleteDoc(doc(db, 'users', currentUser.uid, 'notes', id));
+      try {
+        await deleteObject(ref(storage, `users/${currentUser.uid}/audio/${id}.mp3`));
+      } catch {}
+    }
+
+    function audioRef(noteId) {
+      return ref(storage, `users/${currentUser.uid}/audio/${noteId}.mp3`);
+    }
+
+    async function cacheAudio(noteId, textHash, blob) {
+      const storageRef = audioRef(noteId);
+      await uploadBytes(storageRef, blob, { contentType: 'audio/mpeg' });
+      const url = await getDownloadURL(storageRef);
+
+      // Verify text hasn't changed during upload before saving URL
+      const noteSnap = await getDoc(doc(db, 'users', currentUser.uid, 'notes', noteId));
+      const snapHash = noteSnap.exists() && noteSnap.data().textHash;
+      if (!noteSnap.exists() || (snapHash && snapHash !== textHash)) {
+        // Text changed or note deleted — discard the upload
+        try { await deleteObject(storageRef); } catch {}
+        return null;
+      }
+
+      await setDoc(doc(db, 'users', currentUser.uid, 'notes', noteId), { audioUrl: url }, { merge: true });
+      return url;
     }
 
     // --- Voice settings in Firestore ---
@@ -729,11 +793,24 @@
       return d.innerHTML;
     }
 
+    const charCounter = document.getElementById('charCounter');
+
+    function updateCharCounter() {
+      const len = noteTextInput.value.length;
+      charCounter.textContent = `${len.toLocaleString()} / ${MAX_NOTE_LENGTH.toLocaleString()}`;
+      charCounter.classList.remove('warn', 'limit');
+      if (len >= MAX_NOTE_LENGTH) charCounter.classList.add('limit');
+      else if (len >= MAX_NOTE_LENGTH * 0.9) charCounter.classList.add('warn');
+    }
+
+    noteTextInput.addEventListener('input', updateCharCounter);
+
     function openModal(title = '', text = '', heading = 'New Note') {
       modalTitle.textContent = heading;
       noteTitleInput.value = title;
       noteTextInput.value = text;
       modal.classList.add('open');
+      updateCharCounter();
       noteTextInput.focus();
     }
 
@@ -773,16 +850,31 @@
       render();
 
       try {
-        const voiceId = voiceSelect.value || '';
-        const res = await fetch('/api/tts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: n.text, voiceId }),
-        });
-        if (!res.ok) throw new Error('TTS failed');
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
+        let audioSrc;
+
+        // Use cached audio if available
+        if (n.audioUrl) {
+          console.log(`[Audio] Playing from cache for note "${n.title || n.id}"`);
+          audioSrc = n.audioUrl;
+        } else {
+          console.log(`[Audio] Generating via ElevenLabs for note "${n.title || n.id}"`);
+          // Generate via ElevenLabs and cache
+          const voiceId = voiceSelect.value || '';
+          const res = await fetch('/api/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: n.text, voiceId }),
+          });
+          if (!res.ok) throw new Error('TTS failed');
+          const blob = await res.blob();
+          audioSrc = URL.createObjectURL(blob);
+
+          // Cache to Firebase Storage in background
+          const currentHash = n.textHash || await hashText(n.text);
+          cacheAudio(id, currentHash, blob).catch(err => console.error('Audio cache error:', err));
+        }
+
+        const audio = new Audio(audioSrc);
         audio.onended = () => { currentAudio = null; playingId = null; render(); };
         currentAudio = audio;
         playingId = id;
