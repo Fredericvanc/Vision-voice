@@ -116,7 +116,7 @@
     }
 
     #appContent { display: none; }
-    #loginScreen { display: none; }
+    #loginScreen { display: flex; }
 
     .voice-bar {
       display: flex;
@@ -507,7 +507,7 @@
       currentUser = user;
       if (user) {
         loginScreen.style.display = 'none';
-        appContent.style.display = '';
+        appContent.style.display = 'block';
         authBar.innerHTML = `
           <span class="user-name">${esc(user.displayName || user.email)}</span>
           ${user.photoURL ? `<img src="${esc(user.photoURL)}" alt="avatar">` : ''}
