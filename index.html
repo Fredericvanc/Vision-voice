@@ -19,6 +19,7 @@
     header {
       text-align: center;
       padding: 24px 16px 12px;
+      position: relative;
     }
 
     header h1 {
@@ -33,6 +34,89 @@
       color: #888;
       margin-top: 4px;
     }
+
+    .auth-bar {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .auth-bar img {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+    }
+
+    .auth-bar .user-name {
+      font-size: 0.8rem;
+      color: #aaa;
+      max-width: 100px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .auth-bar button {
+      background: #1e3a5f;
+      color: #60a5fa;
+      border: none;
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      font-weight: 500;
+    }
+
+    .btn-google {
+      background: #fff;
+      color: #333;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .login-screen {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      padding: 40px 16px;
+    }
+
+    .login-screen h2 {
+      font-size: 1.3rem;
+      color: #c4b5fd;
+    }
+
+    .login-screen p {
+      color: #888;
+      font-size: 0.9rem;
+      text-align: center;
+      max-width: 300px;
+    }
+
+    .login-screen button {
+      background: #fff;
+      color: #333;
+      border: none;
+      border-radius: 10px;
+      padding: 12px 24px;
+      font-size: 1rem;
+      cursor: pointer;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #appContent { display: none; }
+    #loginScreen { display: none; }
 
     .voice-bar {
       display: flex;
@@ -309,18 +393,32 @@
   <header>
     <h1>Vision Voice</h1>
     <p>Write your vision. Hear it back.</p>
+    <div class="auth-bar" id="authBar"></div>
   </header>
 
-  <div class="voice-bar">
-    <select id="voiceSelect"><option value="">Loading voices...</option></select>
-    <button id="cloneVoiceBtn">Clone Voice</button>
+  <!-- Login screen -->
+  <div class="login-screen" id="loginScreen">
+    <h2>Welcome to Vision Voice</h2>
+    <p>Sign in to save your notes across devices and never lose your visions.</p>
+    <button id="googleSignInBtn" class="btn-google">
+      <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+      Sign in with Google
+    </button>
   </div>
 
-  <main>
-    <div class="notes-list" id="notesList"></div>
-  </main>
+  <!-- App content (hidden until auth) -->
+  <div id="appContent">
+    <div class="voice-bar">
+      <select id="voiceSelect"><option value="">Loading voices...</option></select>
+      <button id="cloneVoiceBtn">Clone Voice</button>
+    </div>
 
-  <button class="add-btn" id="addBtn" aria-label="Add note">+</button>
+    <main>
+      <div class="notes-list" id="notesList"></div>
+    </main>
+
+    <button class="add-btn" id="addBtn" aria-label="Add note">+</button>
+  </div>
 
   <!-- Note modal -->
   <div class="modal-overlay" id="modal">
@@ -356,19 +454,117 @@
     </div>
   </div>
 
-  <script>
+  <!-- Firebase SDK -->
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.3.0/firebase-app.js';
+    import { getAuth, signInWithPopup, signOut, onAuthStateChanged, GoogleAuthProvider } from 'https://www.gstatic.com/firebasejs/11.3.0/firebase-auth.js';
+    import { getFirestore, collection, doc, setDoc, getDocs, deleteDoc, onSnapshot, orderBy, query } from 'https://www.gstatic.com/firebasejs/11.3.0/firebase-firestore.js';
+
+    // Firebase config - replace with your own from Firebase console
+    const firebaseConfig = {
+      apiKey: "AIzaSyApBfx6YCnk48PDJQM-KMAdJyWu37vAOf0",
+      authDomain: "vision-voice-8f852.firebaseapp.com",
+      projectId: "vision-voice-8f852",
+      storageBucket: "vision-voice-8f852.firebasestorage.app",
+      messagingSenderId: "924915764132",
+      appId: "1:924915764132:web:655c7343b2f4decd1c0f31",
+      measurementId: "G-15VVWYK9E7"
+    };
+
+    const firebaseApp = initializeApp(firebaseConfig);
+    const auth = getAuth(firebaseApp);
+    const db = getFirestore(firebaseApp);
+    const googleProvider = new GoogleAuthProvider();
+
+    // DOM refs
     const notesList = document.getElementById('notesList');
     const modal = document.getElementById('modal');
     const noteTitleInput = document.getElementById('noteTitleInput');
     const noteTextInput = document.getElementById('noteTextInput');
     const modalTitle = document.getElementById('modalTitle');
     const voiceSelect = document.getElementById('voiceSelect');
+    const authBar = document.getElementById('authBar');
+    const loginScreen = document.getElementById('loginScreen');
+    const appContent = document.getElementById('appContent');
 
-    let notes = JSON.parse(localStorage.getItem('vision-notes') || '[]');
+    let notes = [];
     let editingId = null;
     let currentAudio = null;
     let playingId = null;
     let loadingId = null;
+    let currentUser = null;
+    let unsubNotes = null;
+
+    // --- Auth ---
+    document.getElementById('googleSignInBtn').addEventListener('click', () => {
+      signInWithPopup(auth, googleProvider).catch(err => {
+        console.error('Sign-in error:', err);
+        alert('Sign-in failed: ' + err.message);
+      });
+    });
+
+    onAuthStateChanged(auth, user => {
+      currentUser = user;
+      if (user) {
+        loginScreen.style.display = 'none';
+        appContent.style.display = '';
+        authBar.innerHTML = `
+          <span class="user-name">${esc(user.displayName || user.email)}</span>
+          ${user.photoURL ? `<img src="${esc(user.photoURL)}" alt="avatar">` : ''}
+          <button id="signOutBtn">Sign out</button>
+        `;
+        document.getElementById('signOutBtn').onclick = () => signOut(auth);
+        loadVoices();
+        subscribeNotes();
+      } else {
+        loginScreen.style.display = '';
+        appContent.style.display = 'none';
+        authBar.innerHTML = '';
+        notes = [];
+        if (unsubNotes) { unsubNotes(); unsubNotes = null; }
+        render();
+      }
+    });
+
+    // --- Firestore notes (real-time) ---
+    function notesCol() {
+      return collection(db, 'users', currentUser.uid, 'notes');
+    }
+
+    function subscribeNotes() {
+      if (unsubNotes) unsubNotes();
+      const q = query(notesCol(), orderBy('createdAt', 'desc'));
+      unsubNotes = onSnapshot(q, snap => {
+        notes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        render();
+      }, err => {
+        console.error('Firestore listen error:', err);
+      });
+    }
+
+    async function saveNote(id, title, text) {
+      const ref = doc(db, 'users', currentUser.uid, 'notes', id);
+      await setDoc(ref, { title, text, createdAt: Date.now() }, { merge: true });
+    }
+
+    async function deleteNote(id) {
+      await deleteDoc(doc(db, 'users', currentUser.uid, 'notes', id));
+    }
+
+    // --- Voice settings in Firestore ---
+    async function saveVoicePref(voiceId) {
+      if (!currentUser) return;
+      await setDoc(doc(db, 'users', currentUser.uid, 'settings', 'voice'), { voiceId }, { merge: true });
+    }
+
+    async function loadVoicePref() {
+      if (!currentUser) return null;
+      try {
+        const snap = await getDocs(collection(db, 'users', currentUser.uid, 'settings'));
+        const voiceDoc = snap.docs.find(d => d.id === 'voice');
+        return voiceDoc ? voiceDoc.data().voiceId : null;
+      } catch { return null; }
+    }
 
     // --- Voice selector ---
     async function loadVoices() {
@@ -377,12 +573,12 @@
         if (!res.ok) throw new Error();
         const data = await res.json();
         const voices = data.voices || [];
-        const saved = localStorage.getItem('vision-voice-id');
+        const saved = await loadVoicePref();
         voiceSelect.innerHTML = voices.map(v =>
           `<option value="${v.voice_id}" ${v.voice_id === saved ? 'selected' : ''}>${esc(v.name)}</option>`
         ).join('');
         if (!saved && voices.length) {
-          localStorage.setItem('vision-voice-id', voices[0].voice_id);
+          saveVoicePref(voices[0].voice_id);
         }
       } catch {
         voiceSelect.innerHTML = '<option value="">Could not load voices</option>';
@@ -390,10 +586,8 @@
     }
 
     voiceSelect.addEventListener('change', () => {
-      localStorage.setItem('vision-voice-id', voiceSelect.value);
+      saveVoicePref(voiceSelect.value);
     });
-
-    loadVoices();
 
     // --- Clone voice ---
     const cloneModal = document.getElementById('cloneModal');
@@ -488,10 +682,9 @@
         if (!res.ok) throw new Error(data.error || 'Clone failed');
         cloneStatus.textContent = `Voice "${data.name}" cloned!`;
         await loadVoices();
-        // Select the new voice
         if (data.voice_id) {
           voiceSelect.value = data.voice_id;
-          localStorage.setItem('vision-voice-id', data.voice_id);
+          saveVoicePref(data.voice_id);
         }
         cloneCloseTimer = setTimeout(() => cloneModal.classList.remove('open'), 1200);
       } catch (err) {
@@ -500,11 +693,7 @@
       }
     };
 
-    // --- Notes ---
-    function save() {
-      localStorage.setItem('vision-notes', JSON.stringify(notes));
-    }
-
+    // --- Notes UI ---
     function render() {
       if (notes.length === 0) {
         notesList.innerHTML = '<div class="empty-state">Tap + to write your first vision</div>';
@@ -515,13 +704,24 @@
           <div class="note-title">${esc(n.title || 'Untitled')}</div>
           <div class="note-text">${esc(n.text)}</div>
           <div class="note-actions">
-            <button class="btn-play" id="play-${n.id}" onclick="speak('${n.id}')" ${loadingId === n.id ? 'disabled' : ''}>${loadingId === n.id ? 'Loading...' : playingId === n.id ? (currentAudio && currentAudio.paused ? 'Resume' : 'Pause') : 'Play'}</button>
-            <button class="btn-edit" onclick="edit('${n.id}')">Edit</button>
-            <button class="btn-delete" onclick="del('${n.id}')">Delete</button>
+            <button class="btn-play" data-action="speak" data-id="${n.id}" ${loadingId === n.id ? 'disabled' : ''}>${loadingId === n.id ? 'Loading...' : playingId === n.id ? (currentAudio && currentAudio.paused ? 'Resume' : 'Pause') : 'Play'}</button>
+            <button class="btn-edit" data-action="edit" data-id="${n.id}">Edit</button>
+            <button class="btn-delete" data-action="delete" data-id="${n.id}">Delete</button>
           </div>
         </div>
       `).join('');
     }
+
+    // Event delegation for note actions
+    notesList.addEventListener('click', e => {
+      const btn = e.target.closest('[data-action]');
+      if (!btn) return;
+      const action = btn.dataset.action;
+      const id = btn.dataset.id;
+      if (action === 'speak') speak(id);
+      else if (action === 'edit') edit(id);
+      else if (action === 'delete') del(id);
+    });
 
     function esc(s) {
       const d = document.createElement('div');
@@ -545,21 +745,21 @@
     document.getElementById('addBtn').onclick = () => openModal();
     document.getElementById('cancelBtn').onclick = closeModal;
 
-    document.getElementById('saveBtn').onclick = () => {
+    document.getElementById('saveBtn').onclick = async () => {
       const text = noteTextInput.value.trim();
       if (!text) return;
-      if (editingId) {
-        const n = notes.find(n => n.id === editingId);
-        if (n) { n.title = noteTitleInput.value.trim(); n.text = text; }
-      } else {
-        notes.unshift({ id: Date.now().toString(), title: noteTitleInput.value.trim(), text });
+      const title = noteTitleInput.value.trim();
+      const id = editingId || Date.now().toString();
+      try {
+        await saveNote(id, title, text);
+      } catch (err) {
+        console.error('Save error:', err);
+        alert('Failed to save note.');
       }
-      save();
-      render();
       closeModal();
     };
 
-    window.speak = async function(id) {
+    async function speak(id) {
       if (playingId === id && currentAudio) {
         if (currentAudio.paused) { currentAudio.play(); } else { currentAudio.pause(); }
         render();
@@ -573,7 +773,7 @@
       render();
 
       try {
-        const voiceId = localStorage.getItem('vision-voice-id') || '';
+        const voiceId = voiceSelect.value || '';
         const res = await fetch('/api/tts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -593,25 +793,24 @@
         loadingId = null;
       }
       render();
-    };
+    }
 
-    window.edit = function(id) {
+    function edit(id) {
       const n = notes.find(n => n.id === id);
       if (!n) return;
       editingId = id;
       openModal(n.title, n.text, 'Edit Note');
-    };
+    }
 
-    window.del = function(id) {
+    function del(id) {
       if (!confirm('Delete this note?')) return;
-      notes = notes.filter(n => n.id !== id);
-      save();
-      render();
-    };
+      deleteNote(id).catch(err => {
+        console.error('Delete error:', err);
+        alert('Failed to delete note.');
+      });
+    }
 
     modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
-
-    render();
   </script>
 </body>
 </html>
