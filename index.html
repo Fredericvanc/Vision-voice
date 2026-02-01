@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>">
   <title>Vision Voice</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -844,6 +845,7 @@
       }
       if (currentAudio) { currentAudio.pause(); currentAudio = null; playingId = null; }
       const n = notes.find(n => n.id === id);
+      console.log(`[Audio] speak("${id}"), found note:`, !!n, 'notes ids:', notes.map(x => x.id));
       if (!n) return;
 
       loadingId = id;
