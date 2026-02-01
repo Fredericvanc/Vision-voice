@@ -410,6 +410,7 @@
     let cloneCloseTimer = null;
 
     document.getElementById('cloneVoiceBtn').onclick = () => {
+      clearTimeout(cloneCloseTimer);
       cloneModal.classList.add('open');
       cloneNameInput.value = '';
       cloneStatus.textContent = '';
