@@ -34,6 +34,40 @@
       margin-top: 4px;
     }
 
+    .voice-bar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 16px;
+      max-width: 600px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .voice-bar select {
+      flex: 1;
+      background: #1a1a2e;
+      border: 1px solid #2a2a40;
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: #e0e0e0;
+      font-size: 0.85rem;
+      outline: none;
+    }
+
+    .voice-bar button {
+      background: #1e3a5f;
+      color: #60a5fa;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+
     main {
       flex: 1;
       display: flex;
@@ -217,6 +251,58 @@
       background: #2a2a40;
       color: #aaa;
     }
+
+    /* Clone modal extras */
+    .clone-section {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .clone-section label {
+      font-size: 0.85rem;
+      color: #888;
+    }
+
+    .clone-btns {
+      display: flex;
+      gap: 8px;
+    }
+
+    .clone-btns button {
+      flex: 1;
+      padding: 10px;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      font-weight: 500;
+    }
+
+    .btn-record {
+      background: #dc2626;
+      color: white;
+    }
+
+    .btn-record.recording {
+      animation: pulse 1s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .btn-upload {
+      background: #1e3a5f;
+      color: #60a5fa;
+    }
+
+    .clone-status {
+      font-size: 0.8rem;
+      color: #888;
+      min-height: 1.2em;
+    }
   </style>
 </head>
 <body>
@@ -225,12 +311,18 @@
     <p>Write your vision. Hear it back.</p>
   </header>
 
+  <div class="voice-bar">
+    <select id="voiceSelect"><option value="">Loading voices...</option></select>
+    <button id="cloneVoiceBtn">Clone Voice</button>
+  </div>
+
   <main>
     <div class="notes-list" id="notesList"></div>
   </main>
 
   <button class="add-btn" id="addBtn" aria-label="Add note">+</button>
 
+  <!-- Note modal -->
   <div class="modal-overlay" id="modal">
     <div class="modal">
       <h2 id="modalTitle">New Note</h2>
@@ -243,12 +335,34 @@
     </div>
   </div>
 
+  <!-- Clone voice modal -->
+  <div class="modal-overlay" id="cloneModal">
+    <div class="modal">
+      <h2>Clone Your Voice</h2>
+      <div class="clone-section">
+        <input type="text" id="cloneNameInput" placeholder="Voice name">
+        <label>Record or upload a voice sample (at least a few seconds):</label>
+        <div class="clone-btns">
+          <button class="btn-record" id="recordBtn">Record</button>
+          <button class="btn-upload" id="uploadBtn">Upload File</button>
+        </div>
+        <input type="file" id="audioFileInput" accept=".mp3,.wav,.m4a,.webm" style="display:none">
+        <div class="clone-status" id="cloneStatus"></div>
+        <div class="modal-actions">
+          <button class="btn-cancel" id="cloneCancelBtn">Cancel</button>
+          <button class="btn-save" id="cloneSubmitBtn" disabled>Clone</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     const notesList = document.getElementById('notesList');
     const modal = document.getElementById('modal');
     const noteTitleInput = document.getElementById('noteTitleInput');
     const noteTextInput = document.getElementById('noteTextInput');
     const modalTitle = document.getElementById('modalTitle');
+    const voiceSelect = document.getElementById('voiceSelect');
 
     let notes = JSON.parse(localStorage.getItem('vision-notes') || '[]');
     let editingId = null;
@@ -256,6 +370,136 @@
     let playingId = null;
     let loadingId = null;
 
+    // --- Voice selector ---
+    async function loadVoices() {
+      try {
+        const res = await fetch('/api/voices');
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        const voices = data.voices || [];
+        const saved = localStorage.getItem('vision-voice-id');
+        voiceSelect.innerHTML = voices.map(v =>
+          `<option value="${v.voice_id}" ${v.voice_id === saved ? 'selected' : ''}>${esc(v.name)}</option>`
+        ).join('');
+        if (!saved && voices.length) {
+          localStorage.setItem('vision-voice-id', voices[0].voice_id);
+        }
+      } catch {
+        voiceSelect.innerHTML = '<option value="">Could not load voices</option>';
+      }
+    }
+
+    voiceSelect.addEventListener('change', () => {
+      localStorage.setItem('vision-voice-id', voiceSelect.value);
+    });
+
+    loadVoices();
+
+    // --- Clone voice ---
+    const cloneModal = document.getElementById('cloneModal');
+    const cloneNameInput = document.getElementById('cloneNameInput');
+    const cloneStatus = document.getElementById('cloneStatus');
+    const cloneSubmitBtn = document.getElementById('cloneSubmitBtn');
+    const recordBtn = document.getElementById('recordBtn');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const audioFileInput = document.getElementById('audioFileInput');
+
+    let cloneAudioBlob = null;
+    let cloneAudioName = 'recording.webm';
+    let mediaRecorder = null;
+    let cloneCloseTimer = null;
+
+    document.getElementById('cloneVoiceBtn').onclick = () => {
+      cloneModal.classList.add('open');
+      cloneNameInput.value = '';
+      cloneStatus.textContent = '';
+      cloneAudioBlob = null;
+      cloneSubmitBtn.disabled = true;
+      cloneNameInput.focus();
+    };
+
+    function closeCloneModal() {
+      cloneModal.classList.remove('open');
+      clearTimeout(cloneCloseTimer);
+      if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
+    }
+
+    document.getElementById('cloneCancelBtn').onclick = closeCloneModal;
+
+    cloneModal.addEventListener('click', e => { if (e.target === cloneModal) closeCloneModal(); });
+
+    recordBtn.onclick = async () => {
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const chunks = [];
+        mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder.ondataavailable = e => chunks.push(e.data);
+        mediaRecorder.onstop = () => {
+          stream.getTracks().forEach(t => t.stop());
+          cloneAudioBlob = new Blob(chunks, { type: mediaRecorder.mimeType });
+          cloneAudioName = 'recording.webm';
+          cloneStatus.textContent = 'Recording captured.';
+          cloneSubmitBtn.disabled = !cloneNameInput.value.trim();
+          recordBtn.textContent = 'Record';
+          recordBtn.classList.remove('recording');
+        };
+        mediaRecorder.start();
+        recordBtn.textContent = 'Stop';
+        recordBtn.classList.add('recording');
+        cloneStatus.textContent = 'Recording...';
+      } catch {
+        cloneStatus.textContent = 'Microphone access denied.';
+      }
+    };
+
+    uploadBtn.onclick = () => audioFileInput.click();
+
+    audioFileInput.onchange = () => {
+      const file = audioFileInput.files[0];
+      if (!file) return;
+      cloneAudioBlob = file;
+      cloneAudioName = file.name;
+      cloneStatus.textContent = `File: ${file.name}`;
+      cloneSubmitBtn.disabled = !cloneNameInput.value.trim();
+    };
+
+    cloneNameInput.oninput = () => {
+      cloneSubmitBtn.disabled = !cloneNameInput.value.trim() || !cloneAudioBlob;
+    };
+
+    cloneSubmitBtn.onclick = async () => {
+      const name = cloneNameInput.value.trim();
+      if (!name || !cloneAudioBlob) return;
+      cloneSubmitBtn.disabled = true;
+      cloneStatus.textContent = 'Cloning...';
+
+      const fd = new FormData();
+      fd.append('name', name);
+      fd.append('audio', cloneAudioBlob, cloneAudioName);
+
+      try {
+        const res = await fetch('/api/clone-voice', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Clone failed');
+        cloneStatus.textContent = `Voice "${data.name}" cloned!`;
+        await loadVoices();
+        // Select the new voice
+        if (data.voice_id) {
+          voiceSelect.value = data.voice_id;
+          localStorage.setItem('vision-voice-id', data.voice_id);
+        }
+        cloneCloseTimer = setTimeout(() => cloneModal.classList.remove('open'), 1200);
+      } catch (err) {
+        cloneStatus.textContent = 'Error: ' + err.message;
+        cloneSubmitBtn.disabled = false;
+      }
+    };
+
+    // --- Notes ---
     function save() {
       localStorage.setItem('vision-notes', JSON.stringify(notes));
     }
@@ -315,17 +559,11 @@
     };
 
     window.speak = async function(id) {
-      // If this note is currently playing, toggle pause/resume
       if (playingId === id && currentAudio) {
-        if (currentAudio.paused) {
-          currentAudio.play();
-        } else {
-          currentAudio.pause();
-        }
+        if (currentAudio.paused) { currentAudio.play(); } else { currentAudio.pause(); }
         render();
         return;
       }
-      // Stop any current playback
       if (currentAudio) { currentAudio.pause(); currentAudio = null; playingId = null; }
       const n = notes.find(n => n.id === id);
       if (!n) return;
@@ -334,10 +572,11 @@
       render();
 
       try {
+        const voiceId = localStorage.getItem('vision-voice-id') || '';
         const res = await fetch('/api/tts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: n.text }),
+          body: JSON.stringify({ text: n.text, voiceId }),
         });
         if (!res.ok) throw new Error('TTS failed');
         const blob = await res.blob();
